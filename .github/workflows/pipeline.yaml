@@ -39,7 +39,7 @@ jobs:
       run : terraform -chdir=./terraform plan -input=false -out tfplan
 
     - name: Terraform Apply
-      run : terraform -chdir=./terraform apply -auto-approve -input=false tfplan
+      run : terraform -chdir=./terraform destroy -auto-approve -input=false tfplan
 
     - name: Terraform Show
       run : terraform -chdir=./terraform show
