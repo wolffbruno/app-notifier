@@ -27,22 +27,11 @@ jobs:
     - name: Terraform Validate
       run : terraform -chdir=./terraform validate
 
-    #- name: Setup chekhov
-    #  run: |
-    #    pip3 install checkov
-#
-    #- name: Checkov Scan
-    #  run: |
-    #    checkov -d ./terraform
-
     - name: Terraform Plan
       run : terraform -chdir=./terraform plan -input=false -out tfplan
 
     - name: Terraform Apply
-      run : terraform -chdir=./terraform destroy -auto-approve -input=false
-
-    #- name: Terraform Apply
-    #  run : terraform -chdir=./terraform apply -auto-approve -input=false tfplan
+      run : terraform -chdir=./terraform apply -auto-approve -input=false tfplan
 
     - name: Terraform Show
       run : terraform -chdir=./terraform show
