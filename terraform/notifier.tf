@@ -1,47 +1,110 @@
-module "rede" {
-    source               = "./modules/rede"
-    vpc_cidr             = "10.0.0.0/16"
-    vpc_az1              = "${var.vpc_az1}"
-    vpc_az2              = "${var.vpc_az2}"
-    vpc_sn_pub_az1_cidr  = "${var.vpc_sn_pub_az1_cidr}"
-    vpc_sn_pub_az2_cidr  = "${var.vpc_sn_pub_az2_cidr}"
-    vpc_sn_priv_az1_cidr = "${var.vpc_sn_priv_az1_cidr}"
-    vpc_sn_priv_az2_cidr = "${var.vpc_sn_priv_az2_cidr}"
+data "client" "current" {
+  cidr = "0.0.0.0/0"
 }
 
-module "dados" {
-    source               = "./modules/dados"
-    rds_identifier       = "${var.rds_identifier}"
-    rds_engine_version   = "${var.rds_engine_version}"
-    rds_sn_group_name    = "${var.rds_sn_group_name}"
-    rds_param_group_name = "${var.rds_param_group_name}"
-    rds_dbname           = "${var.rds_dbname}"
-    rds_dbuser           = "${var.rds_dbuser}"
-    rds_dbpassword       = "${var.rds_dbpassword}"
-    vpc_sn_priv_az1_id   = "${module.rede.vpc_sn_priv_az1_id}"
-    vpc_sn_priv_az2_id   = "${module.rede.vpc_sn_priv_az2_id}"
-    vpc_sg_priv_id       = "${module.rede.vpc_sg_priv_id}"
+resource "aws_vpc" "rds_vpc" {
+  cidr_block           = "172.32.0.0/16"
+  enable_dns_hostnames = true
+
+  tags = {
+    Name = "rds_vpc"
+  }
 }
 
-module "compute" {
-    source                   = "./modules/compute"
-    ec2_lt_name              = "${var.ec2_lt_name}"
-    ec2_lt_ami               = "${var.ec2_lt_ami}"
-    ec2_lt_instance_type     = "${var.ec2_lt_instance_type}"
-    ec2_lt_ssh_key_name      = "${var.ec2_lt_ssh_key_name}"
-    ec2_lb_name              = "${var.ec2_lb_name}"
-    ec2_lb_tg_name           = "${var.ec2_lb_tg_name}"
-    ec2_asg_name             = "${var.ec2_asg_name}"
-    ec2_asg_desired_capacity = "${var.ec2_asg_desired_capacity}"
-    ec2_asg_min_size         = "${var.ec2_asg_min_size}"
-    ec2_asg_max_size         = "${var.ec2_asg_max_size}"
-    vpc_cidr                 = "${var.vpc_cidr}"
-    vpc_id                   = "${module.rede.vpc_id}"
-    vpc_sn_pub_az1_id        = "${module.rede.vpc_sn_pub_az1_id}"
-    vpc_sn_pub_az2_id        = "${module.rede.vpc_sn_pub_az2_id}"
-    vpc_sg_pub_id            = "${module.rede.vpc_sg_pub_id}"
-    rds_endpoint             = "${module.dados.rds_endpoint}"
-    rds_dbuser               = "${var.rds_dbuser}"
-    rds_dbpassword           = "${var.rds_dbpassword}"
-    rds_dbname               = "${var.rds_dbname}"
+resource "aws_subnet" "rds_subnet_1" {
+  vpc_id            = aws_vpc.rds_vpc.id
+  cidr_block        = "172.32.1.0/24"
+  availability_zone = "us-east-1a"
+
+  tags = {
+    Name = "rds_subnet_1"
+  }
+}
+
+resource "aws_subnet" "rds_subnet_2" {
+  vpc_id            = aws_vpc.rds_vpc.id
+  cidr_block        = "172.32.2.0/24"
+  availability_zone = "us-east-1b"
+
+  tags = {
+    Name = "rds_subnet_2"
+  }
+}
+
+resource "aws_security_group" "rds_sg" {
+  name        = "rds_sg"
+  description = "Allow inbound traffic"
+
+  ingress {
+    from_port   = -1
+    to_port     = 443
+    protocol    = "udp"
+    cidr_blocks = [data.client.current.cidr]
+  }
+}
+
+resource "aws_security_group_rule" "rds_sg_rule" {
+  type                     = "ingress"
+  from_port                = -1
+  to_port                  = -1
+  protocol                 = "-1"
+  source_security_group_id = aws_security_group.rds_sg.id
+  security_group_id        = aws_security_group.rds_sg.id
+}
+
+resource "aws_ec2_client_vpn_endpoint" "rds_vpn_endpoint" {
+  description            = "rds_vpn_endpoint"
+  server_certificate_arn = "arn:aws:acm:us-east-1:798922568248:certificate/478b6cac-bd76-4085-8e5f-d86127c496bf"
+  vpc_id                 = aws_vpc.rds_vpc.id
+  security_group_ids = [
+    aws_security_group.rds_sg.id,
+  ]
+  client_cidr_block = data.client.current.cidr
+
+  authentication_options {
+    type                       = "certificate-authentication"
+    root_certificate_chain_arn = "arn:aws:acm:us-east-1:798922568248:certificate/37ff8377-5dd9-4c5d-9f31-e8244823ce2c"
+  }
+  connection_log_options {
+    enabled = false
+    // cloudwatch_log_group  = "rds_vpn_endpoint"
+    // cloudwatch_log_stream = "rds_vpn_endpoint"
+  }
+}
+
+resource "aws_ec2_client_vpn_network_association" "rds_vpn_subnet_1" {
+  client_vpn_endpoint_id = aws_ec2_client_vpn_endpoint.rds_vpn_endpoint.id
+  subnet_id              = aws_subnet.rds_subnet_1.id
+}
+
+resource "aws_ec2_client_vpn_network_association" "rds_vpn_subnet_2" {
+  client_vpn_endpoint_id = aws_ec2_client_vpn_endpoint.rds_vpn_endpoint.id
+  subnet_id              = aws_subnet.rds_subnet_2.id
+}
+
+resource "aws_ec2_client_vpn_authorization_rule" "rds_vpn_auth_rule" {
+  client_vpn_endpoint_id = aws_ec2_client_vpn_endpoint.rds_vpn_endpoint.id
+  target_network_cidr    = data.client.current.cidr
+  authorize_all_groups   = true
+}
+
+resource "aws_db_subnet_group" "rds_subnet_group" {
+  name       = "rds_subnet_group"
+  subnet_ids = [aws_subnet.rds_subnet_1.id, aws_subnet.rds_subnet_2.id]
+}
+
+resource "aws_db_instance" "rds_instance" {
+  identifier             = "rds_instance"
+  db_name                = "rds_instance"
+  allocated_storage      = 20
+  storage_type           = "gp2"
+  engine                 = "postgres"
+  engine_version         = "11.5"
+  instance_class         = "db.t2.micro"
+  username               = "postgres"
+  password               = "postgres"
+  db_subnet_group_name   = aws_db_subnet_group.rds_subnet_group.name
+  vpc_security_group_ids = [aws_security_group.rds_sg.id]
+  skip_final_snapshot    = true
+  publicly_accessible    = false
 }
